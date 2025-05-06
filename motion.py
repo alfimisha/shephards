@@ -1,7 +1,7 @@
 import serial
 import serial.tools.list_ports
 import time
-#filter all the needed ports
+
 def list_ports():
     ports = serial.tools.list_ports.comports()
     return [port.device for port in ports if 'usbmodem' in port.device]
@@ -19,30 +19,36 @@ if len(filtered_ports) > 1:
 
     try:
         while True:
-            port0_str = ""
-            port1_str = ""
+            port0_lines = []
+            port1_lines = []
 
-            # Read all available bytes from port0
-            while ser0.in_waiting > 0:
-                port0_str += ser0.read().decode('utf-8', errors='ignore')
+            # Collect 3 complete lines from port0
+            while len(port0_lines) < 3:
+                if ser0.in_waiting:
+                    line = ser0.readline().decode('utf-8', errors='ignore').strip()
+                    if line:
+                        port0_lines.append(line)
 
-            if port0_str:
-                print("port0:", port0_str.strip())
-                
-
-            # Read all available bytes from port1
-            while ser1.in_waiting > 0:
-                port1_str += ser1.read().decode('utf-8', errors='ignore')
-
+            # Collect 1 complete line from port1
+            while len(port1_lines) < 3:
+                if ser1.in_waiting:
+                    line = ser1.readline().decode('utf-8', errors='ignore').strip()
+                    if line:
+                        port1_lines.append(line)
+            # Print all at once
+            for line in port0_lines:
+                print("port0:", line)
+            print ("." * 100)
+            for line in port0_lines:
+                print("port1:", line)
             
+            print("-" * 50)  # separator for readability
 
-            if port1_str:
-                print("port1:", port1_str.strip())
+            time.sleep(0.1)
 
-                time.sleep(0.1)
     except KeyboardInterrupt:
         print("Exiting program.")
         ser0.close()
         ser1.close()
 else:
-    print("No ports found.")
+    print("Not enough ports found.")

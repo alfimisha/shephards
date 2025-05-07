@@ -2,6 +2,12 @@ import serial
 import serial.tools.list_ports
 import time
 import math
+import os
+import pickle
+import numpy as np
+from pynput import keyboard  # Replaced keyboard library
+from tslearn.metrics import dtw
+from sklearn.neighbors import KNeighborsClassifier
 
 # === Class & Function Definitions ===
 
@@ -54,11 +60,23 @@ def list_ports():
     ports = serial.tools.list_ports.comports()
     return [port.device for port in ports if 'usbmodem' in port.device]
 
+# === Model Functions ===
+
+MODEL_PATH = "motion_model.pkl"
+
+def save_baseline(baseline_data):
+    with open(MODEL_PATH, 'wb') as f:
+        pickle.dump(baseline_data, f)
+
+def load_baseline():
+    if os.path.exists(MODEL_PATH):
+        with open(MODEL_PATH, 'rb') as f:
+            return pickle.load(f)
+    return None
+
 # === Main Program ===
 
 dist = []
-
-
 filtered_ports = list_ports()
 
 if len(filtered_ports) > 1:
@@ -66,40 +84,75 @@ if len(filtered_ports) > 1:
     ser1 = serial.Serial(filtered_ports[1], 9600, timeout=1)
     print(f"Connected to:\n  Port 0: {filtered_ports[0]}\n  Port 1: {filtered_ports[1]}")
 
+    baseline_data = load_baseline()
+
+    stop_flag = [False]  # Use a list to simulate a mutable flag
+
+    def on_press(key):
+        if hasattr(key, 'char') and key.char == 'q':  # Check if the 'q' key is pressed
+            stop_flag[0] = True  # Set the flag to stop the loop
+            print("\n'q' detected. Exiting loop and preparing training or inference...")
+
+    # Start listening for key events in a separate thread
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
+
     try:
-        while True:
+        while not stop_flag[0]:
             port0_lines = []
             port1_lines = []
 
-            # Collect 3 lines from each port
+            # Collect data from port0
             while len(port0_lines) < 3:
                 if ser0.in_waiting:
                     line = ser0.readline().decode('utf-8', errors='ignore').strip()
                     if line:
                         port0_lines.append(line)
 
+            # Collect data from port1
             while len(port1_lines) < 3:
                 if ser1.in_waiting:
                     line = ser1.readline().decode('utf-8', errors='ignore').strip()
                     if line:
                         port1_lines.append(line)
 
-            # Compute avg acceleration from port0
+            # Compute average acceleration from port0 data
             port0_str = "\n".join(port0_lines)
             avg_acc = find_avg_acc_val(port0_str)
-            avg_float = avg_acc.to_float() / 500
+            avg_float = avg_acc.to_float() / 500  # Normalize by 500 or whatever fits your data
 
             if avg_float != 0:
                 dist.append(avg_float)
 
-            # Show output
-            print(f"Latest avg: {avg_float:.3f} | dist: {['{:.2f}'.format(d) for d in dist]}")
+            print(f"Latest avg: {avg_float:.3f} | dist len: {len(dist)}")
 
-            time.sleep(0.1)  # small delay
+            time.sleep(0.1)
 
     except KeyboardInterrupt:
-        print("Stopping...")
-        ser0.close()
-        ser1.close()
+        print("Stopping via Ctrl+C...")
+
+    ser0.close()
+    ser1.close()
+
+    dist_np = np.array(dist).reshape(-1, 1)
+
+    if baseline_data is None:
+        # First time running: Save baseline data
+        print("No baseline found. Saving current motion as baseline.")
+        save_baseline(dist_np)
+        print("Baseline saved.")
+    else:
+        # Compare the new data with the baseline using DTW
+        print("Baseline loaded. Comparing current motion with baseline.")
+        dist_dtw = dtw(baseline_data, dist_np)
+        print(f"DTW distance: {dist_dtw}")
+
+        # Define a threshold for similarity
+        similarity_threshold = 1000  # This can be adjusted based on your needs
+
+        if dist_dtw < similarity_threshold:
+            print("✅ Movement is similar to baseline.")
+        else:
+            print("⚠️ Movement deviates from baseline.")
 else:
     print("Not enough USB modem ports found.")
